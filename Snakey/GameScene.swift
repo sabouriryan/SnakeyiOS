@@ -1,263 +1,278 @@
-import SpriteKit
-import AVFoundation
+import SwiftUI
 
-class GameScene: SKScene {
+// MARK: - Data Models & Enums
+
+/// Represents the x/y coordinate on the game grid.
+struct Position: Equatable {
+    var x: Int
+    var y: Int
+}
+
+/// Possible movement directions for the snake.
+enum Direction {
+    case up, down, left, right
+}
+
+/// Difficulty level determines the timer interval (game speed).
+enum Difficulty: Double, CaseIterable {
+    case easy   = 0.4
+    case medium = 0.2
+    case hard   = 0.1
     
-    // MARK: - Game Elements
-    private var snake = [SKSpriteNode]()
-    private var food: SKSpriteNode!
-    private var currentDirection = CGVector(dx: 1, dy: 0)
-    private var nextDirection = CGVector(dx: 1, dy: 0)
-    private var lastUpdateTime: TimeInterval = 0
-    private var scoreLabel: SKLabelNode!
-    private var isGamePaused = false  // Add this line
-    
-    // MARK: - Game Configuration
-    private let gridSize: CGFloat = 20
-    private var gameSpeed: TimeInterval = 0.1
-    private var score = 0 {
-        didSet { scoreLabel.text = "SCORE: \(score)" }
-    }
-    
-    // MARK: - Sound Handling
-    private var audioPlayer: AVAudioPlayer?
-    private let eatSound = Bundle.main.url(forResource: "eat", withExtension: "wav")
-    private let gameOverSound = Bundle.main.url(forResource: "game_over", withExtension: "wav")
-    
-    // MARK: - Screen Management
-    private var playableRect: CGRect {
-        let inset: CGFloat = gridSize
-        return CGRect(x: inset, y: inset,
-                     width: size.width - inset * 2,
-                     height: size.height - inset * 2)
-    }
-    
-    // MARK: - Lifecycle
-    override func didMove(to view: SKView) {
-        backgroundColor = SKColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1)
-        scaleMode = .resizeFill
-        anchorPoint = CGPoint(x: 0.5, y: 0.5) // Add this line
-        
-        // Add physics world setup
-        physicsWorld.gravity = .zero
-        physicsBody = SKPhysicsBody(edgeLoopFrom: playableRect)
-        
-        createGrid()
-        setupGame()
-    }
-    
-    // MARK: - Setup Methods
-    private func setupGame() {
-        setupScoreLabel()
-        setupSnake()
-        spawnFood()
-        setupGestures()
-        setupBoundaries()
-    }
-    
-    private func createGrid() {
-        for x in stride(from: 0, to: size.width, by: gridSize) {
-            for y in stride(from: 0, to: size.height, by: gridSize) {
-                let gridNode = SKSpriteNode(color: .darkGray, size: CGSize(width: 1, height: 1))
-                gridNode.position = CGPoint(x: x, y: y)
-                addChild(gridNode)
-            }
+    var label: String {
+        switch self {
+        case .easy:   return "Easy"
+        case .medium: return "Medium"
+        case .hard:   return "Hard"
         }
     }
+}
+
+// MARK: - ViewModel
+
+/// Holds all game state, including snake position, food, and game logic.
+class GameState: ObservableObject {
+    @Published var snakeBody: [Position] = [Position(x: 5, y: 5)]
+    @Published var food: Position = Position(x: Int.random(in: 0..<10), y: Int.random(in: 0..<10))
+    @Published var direction: Direction = .right
+    @Published var isGameOver = false
     
-    private func setupScoreLabel() {
-        scoreLabel = SKLabelNode(fontNamed: "Avenir-Black")
-        scoreLabel.text = "SCORE: 0"
-        scoreLabel.fontSize = 24
-        scoreLabel.position = CGPoint(x: size.width/2, y: size.height - 40)
-        addChild(scoreLabel)
-    }
-    
-    private func setupSnake() {
-        let startPosition = CGPoint(x: playableRect.midX, y: playableRect.midY)
-        for i in 0..<3 {
-            let segment = createSegment()
-            segment.position = CGPoint(x: startPosition.x - CGFloat(i) * gridSize, y: startPosition.y)
-            snake.append(segment)
-            addChild(segment)
-        }
-    }
-    
-    private func setupBoundaries() {
-        let boundary = SKPhysicsBody(edgeLoopFrom: playableRect)
-        boundary.categoryBitMask = 0x1 << 0
-        physicsBody = boundary
-    }
-    
-    // MARK: - Game Logic
-    override func update(_ currentTime: TimeInterval) {
-        guard !isGamePaused else { return }
+    let gridSize = 10
+
+    /// Updates the snake's position and handles collisions/food pickup.
+    func update() {
+        guard !isGameOver else { return }
         
-        if lastUpdateTime == 0 {
-            lastUpdateTime = currentTime
+        // Current head of the snake
+        var newHead = snakeBody[0]
+        
+        // Move head in the current direction
+        switch direction {
+        case .up:
+            newHead.y -= 1
+        case .down:
+            newHead.y += 1
+        case .left:
+            newHead.x -= 1
+        case .right:
+            newHead.x += 1
+        }
+        
+        // Check for collision with walls
+        if newHead.x < 0 || newHead.x >= gridSize || newHead.y < 0 || newHead.y >= gridSize {
+            isGameOver = true
             return
         }
         
-        let delta = currentTime - lastUpdateTime
-        if delta < gameSpeed { return }
-        
-        lastUpdateTime = currentTime
-        currentDirection = nextDirection
-        moveSnake()
-    }
-    
-    private func moveSnake() {
-        guard let head = snake.first else { return }
-        
-        // Move body
-        for i in (1..<snake.count).reversed() {
-            snake[i].position = snake[i-1].position
+        // Check for collision with snake body
+        if snakeBody.contains(newHead) {
+            isGameOver = true
+            return
         }
         
-        // Move head
-        head.position.x += currentDirection.dx * gridSize
-        head.position.y += currentDirection.dy * gridSize
+        // Insert new head
+        snakeBody.insert(newHead, at: 0)
         
-        checkCollisions()
-    }
-    
-    // MARK: - Collision Detection
-    private func checkCollisions() {
-        guard let head = snake.first else { return }
-        
-        // Food collision
-        if head.frame.intersects(food.frame) {
-            handleFoodCollision()
-        }
-        
-        // Wall collision
-        if !playableRect.contains(head.position) {
-            gameOver()
-        }
-        
-        // Self collision
-        for segment in snake[1..<snake.count] where head.frame.intersects(segment.frame) {
-            gameOver()
+        // Check if food is eaten
+        if newHead == food {
+            // Generate new food in a random position not occupied by the snake
+            repeat {
+                food = Position(x: Int.random(in: 0..<gridSize),
+                                y: Int.random(in: 0..<gridSize))
+            } while snakeBody.contains(food)
+        } else {
+            // Remove tail if no food eaten
+            snakeBody.removeLast()
         }
     }
+}
+
+// MARK: - Main View
+
+struct ContentView: View {
     
-    private func handleFoodCollision() {
-        score += 1
-        playSound(eatSound)
-        growSnake()
-        spawnFood()
-        increaseSpeed()
-    }
+    // ObservedObject manages all snake/food logic
+    @ObservedObject var gameState = GameState()
     
-    private func increaseSpeed() {
-        gameSpeed *= 0.95  // Increase speed by 5% each food collected
-    }
+    // Menu-related state
+    @State private var showMenu: Bool = true
+    @State private var selectedDifficulty: Difficulty = .medium
     
-    // MARK: - Game Controls
-    private func setupGestures() {
-        let directions: [UISwipeGestureRecognizer.Direction] = [.up, .down, .left, .right]
-        directions.forEach { direction in
-            let gesture = UISwipeGestureRecognizer(target: self, action: #selector(handleSwipe))
-            gesture.direction = direction
-            view?.addGestureRecognizer(gesture)
+    // Timer to drive the game updates
+    @State private var timer = Timer.publish(every: 0.2, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        ZStack {
+            // Black background
+            Color.black.edgesIgnoringSafeArea(.all)
+            
+            if showMenu {
+                // Difficulty Selection Menu
+                VStack(spacing: 40) {
+                    Text("Snake Game")
+                        .font(.largeTitle)
+                        .foregroundColor(.white)
+                    
+                    // Difficulty Picker
+                    VStack(spacing: 20) {
+                        Text("Select Difficulty:")
+                            .foregroundColor(.white)
+                            .font(.headline)
+                        
+                        Picker("Difficulty", selection: $selectedDifficulty) {
+                            ForEach(Difficulty.allCases, id: \\.self) { difficulty in
+                                Text(difficulty.label).tag(difficulty)
+                            }
+                        }
+                        .pickerStyle(SegmentedPickerStyle())
+                        .padding(.horizontal, 40)
+                    }
+                    
+                    // Start Button
+                    Button(action: {
+                        startGame()
+                    }) {
+                        Text("Start")
+                            .font(.title2)
+                            .padding()
+                            .background(Color.green)
+                            .foregroundColor(.white)
+                            .cornerRadius(10)
+                    }
+                }
+            } else if gameState.isGameOver {
+                // Game Over Screen
+                VStack {
+                    Text("Game Over!")
+                        .foregroundColor(.white)
+                        .font(.largeTitle)
+                        .padding(.bottom, 30)
+                    
+                    Text("Tap to Restart")
+                        .foregroundColor(.white)
+                        .font(.headline)
+                }
+                .onTapGesture {
+                    restartGame()
+                }
+            } else {
+                // Main Game View
+                VStack {
+                    Text("Snake Game")
+                        .foregroundColor(.white)
+                        .font(.title2)
+                        .padding()
+                    
+                    Spacer()
+                    
+                    // The board is a square grid
+                    GeometryReader { geometry in
+                        let cellWidth  = geometry.size.width / CGFloat(gameState.gridSize)
+                        let cellHeight = geometry.size.height / CGFloat(gameState.gridSize)
+                        
+                        ZStack {
+                            // Snake Body
+                            ForEach(0..<gameState.snakeBody.count, id: \\.self) { index in
+                                let segment = gameState.snakeBody[index]
+                                Rectangle()
+                                    .fill(Color.green)
+                                    .frame(width: cellWidth, height: cellHeight)
+                                    .position(
+                                        x: CGFloat(segment.x) * cellWidth + cellWidth / 2,
+                                        y: CGFloat(segment.y) * cellHeight + cellHeight / 2
+                                    )
+                            }
+                            
+                            // Food
+                            Rectangle()
+                                .fill(Color.red)
+                                .frame(width: cellWidth, height: cellHeight)
+                                .position(
+                                    x: CGFloat(gameState.food.x) * cellWidth + cellWidth / 2,
+                                    y: CGFloat(gameState.food.y) * cellHeight + cellHeight / 2
+                                )
+                        }
+                    }
+                    .aspectRatio(1, contentMode: .fit)
+                    Spacer()
+                }
+            }
         }
-    }
-    
-    @objc private func handleSwipe(_ gesture: UISwipeGestureRecognizer) {
-        switch gesture.direction {
-        case .up where currentDirection.dy != -1:
-            nextDirection = CGVector(dx: 0, dy: 1)
-        case .down where currentDirection.dy != 1:
-            nextDirection = CGVector(dx: 0, dy: -1)
-        case .left where currentDirection.dx != 1:
-            nextDirection = CGVector(dx: -1, dy: 0)
-        case .right where currentDirection.dx != -1:
-            nextDirection = CGVector(dx: 1, dy: 0)
-        default: break
+        // Updates the game on each timer tick
+        .onReceive(timer) { _ in
+            if !showMenu && !gameState.isGameOver {
+                withAnimation(.linear(duration: 0.15)) {
+                    gameState.update()
+                }
+            }
         }
+        // Gesture for controlling snake direction
+        .gesture(
+            DragGesture()
+                .onChanged { value in
+                    let horizontalAmount = value.translation.width
+                    let verticalAmount = value.translation.height
+                    
+                    if abs(horizontalAmount) > abs(verticalAmount) {
+                        // Horizontal drag
+                        if horizontalAmount < 0 {
+                            if gameState.direction != .right {
+                                gameState.direction = .left
+                            }
+                        } else {
+                            if gameState.direction != .left {
+                                gameState.direction = .right
+                            }
+                        }
+                    } else {
+                        // Vertical drag
+                        if verticalAmount < 0 {
+                            if gameState.direction != .down {
+                                gameState.direction = .up
+                            }
+                        } else {
+                            if gameState.direction != .up {
+                                gameState.direction = .down
+                            }
+                        }
+                    }
+                }
+        )
     }
     
-    // MARK: - Game State Management
-    private func gameOver() {
-        isGamePaused = true
-        playSound(gameOverSound)
-        
-        let gameOverLabel = SKLabelNode(fontNamed: "Avenir-Black")
-        gameOverLabel.text = "GAME OVER\nTap to Restart"
-        gameOverLabel.numberOfLines = 2
-        gameOverLabel.fontSize = 40
-        gameOverLabel.position = CGPoint(x: size.width/2, y: size.height/2)
-        addChild(gameOverLabel)
+    // MARK: - Methods
+    
+    /// Configure and start a new game by hiding the menu and setting the timer speed.
+    private func startGame() {
+        showMenu = false
+        setTimerSpeed()
     }
     
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        if isGamePaused {
-            restartGame()
-        }
-    }
-    
+    /// Restart the game after a game-over.
     private func restartGame() {
-        removeAllChildren()
-        snake.removeAll()
-        currentDirection = CGVector(dx: 1, dy: 0)
-        nextDirection = currentDirection
-        score = 0
-        isGamePaused = false
+        gameState.snakeBody = [Position(x: 5, y: 5)]
+        gameState.food = Position(x: Int.random(in: 0..<gameState.gridSize),
+                                  y: Int.random(in: 0..<gameState.gridSize))
+        gameState.direction = .right
+        gameState.isGameOver = false
         
-        createGrid()
-        setupGame()
+        setTimerSpeed()
     }
     
-    // MARK: - Helper Methods
-    private func createSegment() -> SKSpriteNode {
-        let segment = SKSpriteNode(color: .green, size: CGSize(width: gridSize-2, height: gridSize-2))
-        segment.zPosition = 1
-        return segment
+    /// Update the timer interval based on the chosen difficulty.
+    private func setTimerSpeed() {
+        timer = Timer.publish(every: selectedDifficulty.rawValue, on: .main, in: .common).autoconnect()
     }
-    
-    private func spawnFood() {
-        food?.removeFromParent()
-        
-        var position: CGPoint
-        repeat {
-            let cols = Int(playableRect.width / gridSize)
-            let rows = Int(playableRect.height / gridSize)
-            let x = playableRect.minX + CGFloat(Int.random(in: 0..<cols)) * gridSize
-            let y = playableRect.minY + CGFloat(Int.random(in: 0..<rows)) * gridSize
-            position = CGPoint(x: x, y: y)
-        } while snake.contains { $0.frame.contains(position) }
-        
-        food = SKSpriteNode(color: .red, size: CGSize(width: gridSize-2, height: gridSize-2))
-        food.position = position
-        food.zPosition = 1
-        addChild(food)
-    }
-    
-    private func growSnake() {
-        guard let last = snake.last else { return }
-        let newSegment = createSegment()
-        newSegment.position = last.position
-        snake.append(newSegment)
-        addChild(newSegment)
-    }
-    
-    private func playSound(_ soundURL: URL?) {
-        guard let url = soundURL else { return }
-        
-        do {
-            audioPlayer = try AVAudioPlayer(contentsOf: url)
-            audioPlayer?.prepareToPlay()
-            audioPlayer?.play()
-        } catch {
-            print("Sound error: \(error.localizedDescription)")
+}
+
+// MARK: - App Entry Point
+
+@main
+struct SnakeGameApp: App {
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
         }
     }
 }
-extension GameScene {
-    override func didChangeSize(_ oldSize: CGSize) {
-        // Handle screen rotation/resizing
-        removeAllChildren()
-        createGrid()
-        setupGame()
-    }
-}
+
