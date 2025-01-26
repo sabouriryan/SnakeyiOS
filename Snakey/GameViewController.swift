@@ -1,45 +1,20 @@
-//
-//  GameViewController.swift
-//  Snakey
-//
-//  Created by Ryan Sabouri on 1/25/25.
-//
-
 import UIKit
 import SpriteKit
-import GameplayKit
 
 class GameViewController: UIViewController {
-
     override func viewDidLoad() {
         super.viewDidLoad()
         
         if let view = self.view as! SKView? {
-            // Load the SKScene from 'GameScene.sks'
-            if let scene = SKScene(fileNamed: "GameScene") {
-                // Set the scale mode to scale to fit the window
-                scene.scaleMode = .aspectFill
-                
-                // Present the scene
-                view.presentScene(scene)
-            }
+            // Create and configure the scene
+            let scene = GameScene(size: view.bounds.size)
+            scene.scaleMode = .resizeFill
             
-            view.ignoresSiblingOrder = true
-            
+            // Debug options (optional)
             view.showsFPS = true
             view.showsNodeCount = true
+            
+            view.presentScene(scene)
         }
-    }
-
-    override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
-        if UIDevice.current.userInterfaceIdiom == .phone {
-            return .allButUpsideDown
-        } else {
-            return .all
-        }
-    }
-
-    override var prefersStatusBarHidden: Bool {
-        return true
     }
 }
